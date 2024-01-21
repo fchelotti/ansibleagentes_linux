@@ -1,0 +1,7 @@
+[linux]
+
+
+[all:vars]
+ansible_connection=ssh
+ansible_user="admin@dominio.net"
+ansible_ssh_pass="{{ ansible_password }}"

@@ -1,0 +1,215 @@
+---
+- name: Unarchive Flexera Package
+  ansible.builtin.unarchive:
+    src: /tmp/RH8/FlexeraLinuxIP_BRA_x64_rpm.tar.gz
+    dest: /tmp/RH8/
+    remote_src: yes
+
+- name: Install Flexera
+  ansible.builtin.shell: "/tmp/RH8/mgssetup.sh"
+  args:
+    chdir: /tmp/RH8
+
+- name: Unarchive Nagios Package
+  ansible.builtin.unarchive:
+    src: /tmp/RH8/nagios8.tar
+    dest: /tmp/RH8/
+    remote_src: yes
+  timeout: 60
+  
+- name: Valida instalação Nagios
+  ansible.builtin.shell: rpm -qa |grep nagios
+  become: true
+  become_method: sudo
+  become_user: root
+  register: nagios_verify
+  failed_when: >
+    ("No such file or directory" in nagios_verify.stdout)
+
+- name: Install Nagios Common Package
+  ansible.builtin.shell: rpm -ivh /tmp/RH8/nagios-common*.rpm
+  become: true
+  become_method: sudo
+  become_user: root
+  when:  "'nagios-common' not in nagios_verify.stdout"
+
+- name: Valida instalação NRPE
+  ansible.builtin.shell: rpm -qa |grep nrpe
+  become: true
+  become_method: sudo
+  become_user: root
+  register: nrpe_verify
+  failed_when: >
+    ("No such file or directory" in nrpe_verify.stdout)
+
+- name: Install NRPE
+  ansible.builtin.shell: rpm -ivh /tmp/RH8/nrpe*.rpm
+  become: true
+  become_method: sudo
+  become_user: root
+  when:  "'nrpe' not in nrpe_verify.stdout"
+
+- name: Install Nagios Plugins
+  ansible.builtin.shell: rpm -ivh /tmp/RH8/nagios-plugins*
+  become: true
+  become_method: sudo
+  become_user: root
+  when:  "'nagios-plugins' not in nagios_verify.stdout"
+
+- name: Copy Nagios Config
+  ansible.builtin.copy:
+    src: nrpe.cfg
+    dest: /etc/nagios/
+
+- name: Start Nagios Service
+  ansible.builtin.service:
+    name: nrpe
+    state: started
+
+- name: Install ARC agent
+  ansible.builtin.shell: "/tmp/RH8/ARC-MDATP/arc_install_sp.sh"
+  args:
+    chdir: /tmp/RH8/ARC-MDATP
+  become: true
+  become_method: sudo
+  become_user: root  
+
+- name: Config ARC agent
+  ansible.builtin.shell: "/tmp/RH8/ARC-MDATP/arc_config_sp.sh"
+  args:
+    chdir: /tmp/RH8/ARC-MDATP
+  become: true
+  become_method: sudo
+  become_user: root  
+
+- name: Status ARC agent
+  ansible.builtin.command: "azcmagent show"
+  args:
+    chdir: /tmp/RH8/ARC-MDATP
+  register: arcagent_status
+  become: true
+  become_method: sudo
+  become_user: root
+
+- name: Add Proxy Sul
+  shell: |
+      cat <<EOF >> /etc/yum.repos.d/microsoft-prod.repo
+      proxy = http://10.104.244.30:8080 
+      EOF
+
+- name: Status
+  debug:
+    msg: "{{ arcagent_status }}"
+  become: true
+  become_method: sudo
+  become_user: root  
+
+- name: Install RPM Package - libnetfilter
+  ansible.builtin.shell: rpm -ivh /tmp/RH8/ARC-MDATP/libnetfilter_queue*.rpm
+  become: true
+  become_method: sudo
+  become_user: root
+
+- name: Install RPM Package - mde-netfilter
+  ansible.builtin.shell: rpm -ivh /tmp/RH8/ARC-MDATP/mde-netfilter*.rpm
+  become: true
+  become_method: sudo
+  become_user: root
+
+- name: Install RPM Package - libatomic
+  ansible.builtin.shell: rpm -ivh /tmp/RH8/ARC-MDATP/libatomic*.rpm
+  become: true
+  become_method: sudo
+  become_user: root   
+
+- name: Install MDATP
+  ansible.builtin.yum:
+    name: mdatp
+    state: present
+
+- name: Add proxy in mdatp.service file
+  ansible.builtin.lineinfile:
+    path: /usr/lib/systemd/system/mdatp.service
+    insertafter: '#Environment="HTTPS_PROXY=http://address:port"'
+    line: Environment="HTTPS_PROXY=http://10.104.244.30:8080"
+    create: yes
+
+- name: Uncompress package Microsoft Defender
+  ansible.builtin.unarchive:
+    src: /tmp/RH8/ARC-MDATP/WindowsDefenderATPOnboardingPackage.zip
+    dest: /tmp/RH8/ARC-MDATP/
+    remote_src: yes
+  become: true
+  become_method: sudo
+  become_user: root
+
+- name: Install Microsoft Defender
+  ansible.builtin.shell: python3 MicrosoftDefenderATPOnboardingLinuxServer.py
+  args:
+    chdir: /tmp/RH8/ARC-MDATP
+  become: true
+  become_method: sudo
+  become_user: root
+
+- name: MDATP Config
+  ansible.builtin.command: mdatp config real-time-protection --value disabled
+  args:
+    chdir: /tmp/RH8/ARC-MDATP
+  become: true
+  become_method: sudo
+  become_user: root
+
+- name: Restart daemon-reload
+  ansible.builtin.command: systemctl daemon-reload
+  become: true
+  become_method: sudo
+  become_user: root
+
+- name: Restart MDATP
+  ansible.builtin.service:
+    name: mdatp
+    state: restarted
+
+- name: Enable MDATP
+  ansible.builtin.command: systemctl enable mdatp
+  become: true
+  become_method: sudo
+  become_user: root
+
+- name: Waiting MDATP updating
+  ansible.builtin.pause:
+    minutes: 1
+
+- name: MDATP Health
+  ansible.builtin.command: mdatp health
+  become: true
+  become_method: sudo
+  become_user: root
+  register: mdatp_health
+
+- name: MDATP Health Status
+  debug:
+    msg: "{{ mdatp_health }}"
+  become: true
+  become_method: sudo
+  become_user: root
+
+- name: Copy Saveconf file
+  ansible.builtin.copy:
+    src: /tmp/RH8/saveconf_linux.sh
+    dest: /usr/local/bin/
+    remote_src: yes
+
+- name: Change permission Saveconf file
+  ansible.builtin.file:
+    path: /usr/local/bin/saveconf_linux.sh
+    owner: "root"
+    group: "root"
+    mode: '0777'    
+
+- name: Add saveconf script in crontab
+  ansible.builtin.cron:
+    name: "saveconf script"
+    minute: "30"
+    hour: "1"
+    job: "/usr/local/bin/saveconf_linux.sh"

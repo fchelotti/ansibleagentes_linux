@@ -1,0 +1,6 @@
+---
+- name: Agentes Linux
+  hosts: linux
+  become: true
+  roles:
+    - role: linux-agentes-sul
